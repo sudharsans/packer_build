@@ -1,0 +1,167 @@
+Description:
+  Template to Create a Ec2 Instance
+
+Parameters:
+  Keyname:
+   Default: anthony
+   Type: AWS::EC2::KeyPair::KeyName
+  Ami:
+    Default: ami-15e9c770
+    Type: AWS::EC2::Image::Id
+
+  InstanceType:
+    Default: t2.micro
+    Type: String
+
+Resources:
+
+  ####
+  # Creating roles to download files from s3
+  ###
+  RootRole: 
+    Type: "AWS::IAM::Role"
+    Properties: 
+      AssumeRolePolicyDocument: 
+        Version: "2012-10-17"
+        Statement: 
+          - 
+            Effect: "Allow"
+            Principal: 
+              Service: 
+                - "ec2.amazonaws.com"
+            Action: 
+              - "sts:AssumeRole"
+      Path: "/"
+  RolePolicies: 
+    Type: "AWS::IAM::Policy"
+    Properties: 
+      PolicyName: !Sub "root-${AWS::StackName}"
+      PolicyDocument: 
+        Version: "2012-10-17"
+        Statement: 
+          - 
+            Effect: "Allow"
+            Action: "*"
+            Resource: "*"
+      Roles: 
+        - 
+          Ref: "RootRole"
+  RootInstanceProfile: 
+    Type: "AWS::IAM::InstanceProfile"
+    Properties: 
+      Path: "/"
+      Roles: 
+        - 
+          Ref: "RootRole"
+
+  SudharsanSecGroup:
+    Type: "AWS::EC2::SecurityGroup"
+    Properties: 
+      GroupName: !Sub "AllowHTTPForSudharsan${AWS::StackName}"
+      GroupDescription: Allow access to http
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          SourceSecurityGroupId: !GetAtt SudharsanELBSecGroup.GroupId
+        - IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          CidrIp: 0.0.0.0/0
+
+  SudharsanELBSecGroup:
+    Type: "AWS::EC2::SecurityGroup"
+    Properties: 
+      GroupName: !Sub "AllowHTTPForELB${AWS::StackName}"
+      GroupDescription: Allow access to http
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: 0.0.0.0/0
+
+  SudharsanLaunchConfig: 
+    Type: "AWS::AutoScaling::LaunchConfiguration"
+    Properties: 
+      KeyName: !Ref Keyname
+      ImageId: !Ref Ami
+      IamInstanceProfile: !Ref RootInstanceProfile
+      UserData: 
+        Fn::Base64: 
+          !Sub |
+          #!/bin/bash
+          aws s3 cp s3://sudharsan-chennai/dist.zip /var/www/html
+          unzip /var/www/html/dist.zip -d /var/www/html
+          service httpd start
+          chkconfig httpd on
+      SecurityGroups: 
+        - Ref: SudharsanSecGroup
+      InstanceType: !Ref InstanceType
+
+  ASG1: 
+    Type: "AWS::AutoScaling::AutoScalingGroup"
+    Properties: 
+      AvailabilityZones: 
+        Fn::GetAZs: 
+          Ref: "AWS::Region"
+      LaunchConfigurationName: 
+        Ref: SudharsanLaunchConfig
+      MaxSize: "3"
+      MinSize: "1"
+      DesiredCapacity: "2"
+      TargetGroupARNs:
+        - !Ref SudharsanTargetGroup
+
+  SudharsanloadBalancer:
+    DependsOn: SudharsanELBSecGroup
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Scheme: internet-facing
+      Subnets:
+      - subnet-7614dd1e
+      - subnet-419ddd0c
+      - subnet-febfbd85
+      LoadBalancerAttributes:
+      - Key: idle_timeout.timeout_seconds
+        Value: '50'
+      SecurityGroups:
+      - !GetAtt SudharsanELBSecGroup.GroupId
+      Tags:
+      - Key: Name
+        Value: ALB
+
+  SudharsanTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckIntervalSeconds: 30
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 10
+      HealthyThresholdCount: 4
+      Matcher:
+        HttpCode: '200'
+      Name: !Sub "MyTargets${AWS::StackName}"
+      Port: 80
+      Protocol: HTTP
+      TargetGroupAttributes:
+      - Key: deregistration_delay.timeout_seconds
+        Value: '20'
+      UnhealthyThresholdCount: 3
+      VpcId: vpc-8b0ccae3
+
+  SudharsanListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+      - Type: forward
+        TargetGroupArn:
+          Ref: SudharsanTargetGroup
+      LoadBalancerArn:
+        Ref: SudharsanloadBalancer
+      Port: 80
+      Protocol: HTTP
+
+Outputs:
+  WebsiteUrl:
+    Value: !GetAtt SudharsanloadBalancer.DNSName
+
+

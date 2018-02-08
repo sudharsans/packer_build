@@ -1,0 +1,29 @@
+{
+  "builders": [
+    {
+      "type": "amazon-ebs",
+      "region": "us-east-2",
+      "source_ami": "ami-15e9c770",
+      "instance_type": "t2.micro",
+      "ssh_username": "ec2-user",
+      "ami_name": "webserver-ami-{{timestamp}}"
+    }
+  ],
+  "provisioners": [
+    {
+      "type": "shell",
+      "execute_command": "sudo -S sh -c '{{ .Vars }} {{ .Path }}'",
+      "inline": ["yum install httpd -y",
+        "service httpd start",
+        "chkconfig httpd on"
+      ]
+    }
+  ],
+  "post-processors": [
+  {
+    "type": "manifest",
+    "output": "manifest.json",
+    "strip_path": true
+  }
+]
+}
